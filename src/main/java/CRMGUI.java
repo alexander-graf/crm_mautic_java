@@ -90,7 +90,7 @@ public class CRMGUI extends JFrame {
         JMenuBar menuBar = new JMenuBar();
         JMenu fileMenu = new JMenu("Datei");
         JMenu contactMenu = new JMenu("Kontakte");
-        JMenu settingsMenu = new JMenu("Einstellungen");  // Neues Menü
+        JMenu settingsMenu = new JMenu("Einstellungen");
         JMenu helpMenu = new JMenu("Hilfe");
 
         JMenuItem exitItem = new JMenuItem("Beenden");
@@ -109,7 +109,7 @@ public class CRMGUI extends JFrame {
         reloadItem.addActionListener(e -> loadContacts());
         contactMenu.add(reloadItem);
 
-        // Einstellungen-Menü
+        // Nur noch Rechnungsnummer-Dialog
         JMenuItem numberItem = new JMenuItem("Rechnungsnummer");
         numberItem.addActionListener(e -> {
             InvoiceNumberDialog dialog = new InvoiceNumberDialog(this, config);
@@ -165,7 +165,18 @@ public class CRMGUI extends JFrame {
         gbc.gridx = 0; gbc.gridy = 0;
         datePanel.add(new JLabel("Rechnungsdatum:"), gbc);
         invoiceDateChooser = new JDateChooser();
-        invoiceDateChooser.setDate(new Date());  // Heute als Standard
+        invoiceDateChooser.setDate(new Date());
+        invoiceDateChooser.setPreferredSize(new Dimension(150, 25));
+        
+        // PropertyChangeListener mit Flag
+        final boolean[] isAdjusting = {false};
+        invoiceDateChooser.getDateEditor().addPropertyChangeListener("date", e -> {
+            if (!isAdjusting[0] && !isValidDate(invoiceDateChooser.getDate(), "Rechnungsdatum")) {
+                isAdjusting[0] = true;
+                invoiceDateChooser.setDate(new Date());
+                isAdjusting[0] = false;
+            }
+        });
         gbc.gridx = 1;
         datePanel.add(invoiceDateChooser, gbc);
 
@@ -173,7 +184,40 @@ public class CRMGUI extends JFrame {
         gbc.gridx = 0; gbc.gridy = 1;
         datePanel.add(new JLabel("Leistungsdatum:"), gbc);
         serviceDateChooser = new JDateChooser();
-        serviceDateChooser.setDate(new Date());  // Heute als Standard
+        serviceDateChooser.setDate(new Date());
+        serviceDateChooser.setPreferredSize(new Dimension(150, 25));
+        
+        // PropertyChangeListener mit Flag
+        final boolean[] isAdjustingService = {false};
+        serviceDateChooser.getDateEditor().addPropertyChangeListener("date", e -> {
+            if (!isAdjustingService[0]) {
+                LocalDate serviceDate = serviceDateChooser.getDate().toInstant()
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate();
+                LocalDate invoiceDate = invoiceDateChooser.getDate().toInstant()
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate();
+                LocalDate today = LocalDate.now();
+
+                isAdjustingService[0] = true;
+                if (serviceDate.isAfter(today)) {
+                    // Wenn Leistungsdatum in der Zukunft liegt, setze auf heute
+                    serviceDateChooser.setDate(new Date());
+                    JOptionPane.showMessageDialog(CRMGUI.this,
+                        "Das Leistungsdatum darf nicht in der Zukunft liegen.",
+                        "Ungültiges Datum",
+                        JOptionPane.WARNING_MESSAGE);
+                } else if (serviceDate.isAfter(invoiceDate)) {
+                    // Wenn Leistungsdatum nach Rechnungsdatum liegt, setze auf Rechnungsdatum
+                    serviceDateChooser.setDate(invoiceDateChooser.getDate());
+                    JOptionPane.showMessageDialog(CRMGUI.this,
+                        "Das Leistungsdatum wurde auf das Rechnungsdatum gesetzt.",
+                        "Datum angepasst",
+                        JOptionPane.INFORMATION_MESSAGE);
+                }
+                isAdjustingService[0] = false;
+            }
+        });
         gbc.gridx = 1;
         datePanel.add(serviceDateChooser, gbc);
 
@@ -360,12 +404,53 @@ public class CRMGUI extends JFrame {
         return items;
     }
 
+    private boolean isValidDate(Date date, String fieldName) {
+        LocalDate selectedDate = date.toInstant()
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate();
+        LocalDate today = LocalDate.now();
+        
+        // Prüfe auf Zukunftsdatum
+        if (selectedDate.isAfter(today)) {
+            JOptionPane.showMessageDialog(this,
+                "Das " + fieldName + " darf nicht in der Zukunft liegen.",
+                "Ungültiges Datum",
+                JOptionPane.WARNING_MESSAGE);
+            return false;
+        }
+
+        // Prüfe Leistungsdatum im Verhältnis zum Rechnungsdatum
+        if (fieldName.equals("Leistungsdatum")) {
+            LocalDate invoiceDate = invoiceDateChooser.getDate().toInstant()
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate();
+            if (selectedDate.isAfter(invoiceDate)) {
+                JOptionPane.showMessageDialog(this,
+                    "Das Leistungsdatum darf nicht nach dem Rechnungsdatum liegen.",
+                    "Ungültiges Datum",
+                    JOptionPane.WARNING_MESSAGE);
+                return false;
+            }
+        }
+        
+        return true;
+    }
+
+    private boolean isValidDates() {
+        return isValidDate(invoiceDateChooser.getDate(), "Rechnungsdatum") &&
+               isValidDate(serviceDateChooser.getDate(), "Leistungsdatum");
+    }
+
     private void showPDFPreview() {
         if (contactList.getSelectedValue() == null || serviceModel.isEmpty()) {
             JOptionPane.showMessageDialog(this,
                 "Bitte wählen Sie einen Kontakt und fügen Sie mindestens eine Dienstleistung hinzu.",
                 "Fehler",
                 JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        if (!isValidDates()) {
             return;
         }
 
@@ -387,8 +472,8 @@ public class CRMGUI extends JFrame {
             }
             
             List<PDFGenerator.ServiceItem> items = parseServiceItems();
-            config.setPreviewMode(true);  // Aktiviere Vorschau-Modus
-            PDFGenerator generator = new PDFGenerator(config);  // Übergebe config
+            config.setPreviewMode(true);
+            PDFGenerator generator = new PDFGenerator(config);
             generator.generateInvoice(
                 selectedContact,
                 items,
@@ -396,7 +481,7 @@ public class CRMGUI extends JFrame {
                 invoiceDateChooser.getDate(),
                 serviceDateChooser.getDate()
             );
-            config.setPreviewMode(false);  // Deaktiviere Vorschau-Modus
+            config.setPreviewMode(false);
             
             // Öffne PDF mit dem Standardprogramm des Systems
             if (Desktop.isDesktopSupported()) {
@@ -435,6 +520,10 @@ public class CRMGUI extends JFrame {
             return;
         }
 
+        if (!isValidDates()) {
+            return;
+        }
+
         try {
             // Hole den ausgewählten Kontakt
             MauticAPI.Contact selectedContact = null;
@@ -458,7 +547,7 @@ public class CRMGUI extends JFrame {
             // Generiere Rechnungsnummer für Dateinamen
             config.setPreviewMode(false);
             PDFGenerator generator = new PDFGenerator(config);
-            String invoiceNumber = generator.generateInvoiceNumber(selectedContact);
+            String invoiceNumber = generator.generateInvoiceNumber(selectedContact, invoiceDateChooser.getDate());
 
             // Generiere Dateinamen
             String fileName = String.format("Graf-Computer-Rechnung-%s-%s-%s-%s.pdf",
@@ -484,7 +573,11 @@ public class CRMGUI extends JFrame {
             }
 
             // Speichere die erhöhte Rechnungsnummer erst jetzt
-            config.confirmInvoiceNumber();
+            // Übergebe das Jahr des Rechnungsdatums
+            LocalDate invoiceDate = invoiceDateChooser.getDate().toInstant()
+                .atZone(java.time.ZoneId.systemDefault())
+                .toLocalDate();
+            config.confirmInvoiceNumber(invoiceDate.getYear());
 
             JOptionPane.showMessageDialog(this,
                 "PDF wurde erfolgreich erstellt!",

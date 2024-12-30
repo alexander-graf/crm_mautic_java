@@ -46,7 +46,7 @@ public class PDFGenerator {
             .replace("\\newcommand{\\leistungsdatum}{\\VAR{15.05.2023}}", 
                     "\\newcommand{\\leistungsdatum}{\\VAR{" + serviceDateStr + "}}")
             .replace("\\newcommand{\\rechnungsnummer}{\\VAR{RE2023-001}}", 
-                    "\\newcommand{\\rechnungsnummer}{\\VAR{" + generateInvoiceNumber(contact) + "}}");
+                    "\\newcommand{\\rechnungsnummer}{\\VAR{" + generateInvoiceNumber(contact, invoiceDate) + "}}");
 
         // Kundenname aufteilen
         String[] nameParts = (contact.firstname + " " + contact.lastname).split(" ", 2);
@@ -243,11 +243,14 @@ public class PDFGenerator {
             "\nLog file content: " + logContent);
     }
 
-    public String generateInvoiceNumber(MauticAPI.Contact contact) {
-        int year = LocalDate.now().getYear();
-        int number = config.getNextInvoiceNumber();
+    public String generateInvoiceNumber(MauticAPI.Contact contact, Date invoiceDate) {
+        LocalDate date = invoiceDate.toInstant()
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate();
         
-        // Generiere Initialen aus Vor- und Nachname des Kunden
+        int year = date.getYear();
+        int number = config.getNextInvoiceNumber(year);
+        
         String prefix = "";
         if (contact.firstname != null && !contact.firstname.isEmpty()) {
             prefix += contact.firstname.charAt(0);
@@ -258,7 +261,7 @@ public class PDFGenerator {
         
         return String.format("RE-%s-%02d%05d", 
             prefix.toUpperCase(), 
-            year % 100,  
+            year % 100,
             number);
     }
 

@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDate;
 
 public class Config {
     private static final String CONFIG_DIR = System.getProperty("user.home") + "/.config";
@@ -12,14 +13,12 @@ public class Config {
     private static final Gson gson = new Gson();
 
     private int lastInvoiceNumber = 0;
-    private String invoicePrefix = "RB";  // Default-Wert
-    private boolean isPreview = false;  // Neues Flag für Vorschau
+    private int lastYear = LocalDate.now().getYear();
+    private boolean isPreview = false;
     private int tempNextNumber;
 
     public static Config load() throws IOException {
-        // Erstelle .config Verzeichnis falls nicht vorhanden
         Files.createDirectories(Paths.get(CONFIG_DIR));
-
         if (Files.exists(CONFIG_PATH)) {
             String json = Files.readString(CONFIG_PATH);
             return gson.fromJson(json, Config.class);
@@ -32,25 +31,25 @@ public class Config {
         Files.writeString(CONFIG_PATH, json);
     }
 
-    public int getNextInvoiceNumber() {
+    public int getNextInvoiceNumber(int requestedYear) {
+        int currentYear = LocalDate.now().getYear();
+        
+        if (currentYear > lastYear && !isPreview) {
+            lastYear = currentYear;
+            lastInvoiceNumber = 1;
+            try {
+                save();
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            return 1;
+        }
+
         if (!isPreview) {
             tempNextNumber = lastInvoiceNumber;
             return tempNextNumber;
         }
         return lastInvoiceNumber;
-    }
-
-    public String getInvoicePrefix() {
-        return invoicePrefix;
-    }
-
-    public void setInvoicePrefix(String prefix) {
-        this.invoicePrefix = prefix;
-        try {
-            save();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
     }
 
     public void setLastInvoiceNumber(int number) {
@@ -70,8 +69,9 @@ public class Config {
         this.isPreview = preview;
     }
 
-    public void confirmInvoiceNumber() {
-        if (!isPreview && tempNextNumber == lastInvoiceNumber) {
+    public void confirmInvoiceNumber(int year) {
+        if (!isPreview && year == LocalDate.now().getYear() && 
+            tempNextNumber == lastInvoiceNumber) {
             lastInvoiceNumber = tempNextNumber + 1;
             try {
                 save();
