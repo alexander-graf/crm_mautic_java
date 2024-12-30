@@ -16,9 +16,11 @@ public class PDFGenerator {
     private final String templatePath;
     private static final DateTimeFormatter DATE_FORMATTER = 
         DateTimeFormatter.ofPattern("dd.MM.yyyy", Locale.GERMAN);
+    private final Config config;
 
-    public PDFGenerator() {
+    public PDFGenerator(Config config) {
         this.templatePath = System.getProperty("user.home") + "/Vorlagen/rechnungs_vorlage_graf.tex";
+        this.config = config;
     }
 
     public void generateInvoice(MauticAPI.Contact contact, List<ServiceItem> items, 
@@ -44,7 +46,7 @@ public class PDFGenerator {
             .replace("\\newcommand{\\leistungsdatum}{\\VAR{15.05.2023}}", 
                     "\\newcommand{\\leistungsdatum}{\\VAR{" + serviceDateStr + "}}")
             .replace("\\newcommand{\\rechnungsnummer}{\\VAR{RE2023-001}}", 
-                    "\\newcommand{\\rechnungsnummer}{\\VAR{" + generateInvoiceNumber() + "}}");
+                    "\\newcommand{\\rechnungsnummer}{\\VAR{" + generateInvoiceNumber(contact) + "}}");
 
         // Kundenname aufteilen
         String[] nameParts = (contact.firstname + " " + contact.lastname).split(" ", 2);
@@ -119,15 +121,15 @@ public class PDFGenerator {
                 .replace("\\newcommand{\\anz" + posChar + "}{\\VAR{}}", 
                         "\\newcommand{\\anz" + posChar + "}{" + String.format(Locale.GERMAN, "%.1f", item.hours) + "}")
                 .replace("\\newcommand{\\einzel" + posChar + "}{\\VAR{}}", 
-                        "\\newcommand{\\einzel" + posChar + "}{" + String.format(Locale.GERMAN, "%.2f", item.rate) + "}")
+                        "\\newcommand{\\einzel" + posChar + "}{" + String.format(Locale.GERMAN, "%.2f €", item.rate) + "}")
                 .replace("\\newcommand{\\sum" + posChar + "}{\\VAR{}}", 
-                        "\\newcommand{\\sum" + posChar + "}{" + String.format(Locale.GERMAN, "%.2f", item.total) + "}");
+                        "\\newcommand{\\sum" + posChar + "}{" + String.format(Locale.GERMAN, "%.2f €", item.total) + "}");
             
             total += item.total;
         }
 
         tex = tex.replace("\\newcommand{\\Endsumme}{\\VAR{400,00 €}}", 
-                         "\\newcommand{\\Endsumme}{\\VAR{" + String.format(Locale.GERMAN, "%.2f", total) + "}}");
+                         "\\newcommand{\\Endsumme}{\\VAR{" + String.format(Locale.GERMAN, "%.2f €", total) + "}}");
 
         // Debug-Ausgabe für die Positionen
         System.out.println("\n=== Positionen ===");
@@ -241,14 +243,23 @@ public class PDFGenerator {
             "\nLog file content: " + logContent);
     }
 
-    private String generateInvoiceNumber() {
-        return "RE" + LocalDate.now().getYear() + 
-               "-" + String.format("%03d", getNextInvoiceNumber());
-    }
-
-    private int getNextInvoiceNumber() {
-        // TODO: Implementiere Rechnungsnummern-Verwaltung
-        return 1;
+    public String generateInvoiceNumber(MauticAPI.Contact contact) {
+        int year = LocalDate.now().getYear();
+        int number = config.getNextInvoiceNumber();
+        
+        // Generiere Initialen aus Vor- und Nachname des Kunden
+        String prefix = "";
+        if (contact.firstname != null && !contact.firstname.isEmpty()) {
+            prefix += contact.firstname.charAt(0);
+        }
+        if (contact.lastname != null && !contact.lastname.isEmpty()) {
+            prefix += contact.lastname.charAt(0);
+        }
+        
+        return String.format("RE-%s-%02d%05d", 
+            prefix.toUpperCase(), 
+            year % 100,  
+            number);
     }
 
     public static class ServiceItem {

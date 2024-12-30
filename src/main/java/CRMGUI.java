@@ -15,6 +15,10 @@ import java.awt.Desktop;
 import java.util.Locale;
 import java.util.Date;
 import com.toedter.calendar.JDateChooser;
+import java.util.Properties;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
+import java.nio.file.Paths;
 
 public class CRMGUI extends JFrame {
     private JList<String> contactList;
@@ -30,6 +34,7 @@ public class CRMGUI extends JFrame {
     private JList<String> serviceList;
     private JDateChooser invoiceDateChooser;  // Rechnungsdatum
     private JDateChooser serviceDateChooser;  // Leistungsdatum
+    private Config config;  // Am Anfang der Klasse bei den anderen Variablen
     
     public CRMGUI() {
         setTitle("CRM System");
@@ -70,11 +75,12 @@ public class CRMGUI extends JFrame {
         addEventHandlers();
 
         try {
+            config = Config.load();  // Lade Konfiguration
             mauticAPI = new MauticAPI("https://mautic.alexander-graf.de");
             loadContacts();  // Initial laden
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
-                "Fehler beim Initialisieren der Mautic-API: " + ex.getMessage(),
+                "Fehler beim Laden der Konfiguration: " + ex.getMessage(),
                 "Fehler",
                 JOptionPane.ERROR_MESSAGE);
         }
@@ -84,6 +90,7 @@ public class CRMGUI extends JFrame {
         JMenuBar menuBar = new JMenuBar();
         JMenu fileMenu = new JMenu("Datei");
         JMenu contactMenu = new JMenu("Kontakte");
+        JMenu settingsMenu = new JMenu("Einstellungen");  // Neues Menü
         JMenu helpMenu = new JMenu("Hilfe");
 
         JMenuItem exitItem = new JMenuItem("Beenden");
@@ -102,8 +109,18 @@ public class CRMGUI extends JFrame {
         reloadItem.addActionListener(e -> loadContacts());
         contactMenu.add(reloadItem);
 
+        // Einstellungen-Menü
+        JMenuItem numberItem = new JMenuItem("Rechnungsnummer");
+        numberItem.addActionListener(e -> {
+            InvoiceNumberDialog dialog = new InvoiceNumberDialog(this, config);
+            dialog.setVisible(true);
+        });
+        
+        settingsMenu.add(numberItem);
+
         menuBar.add(fileMenu);
         menuBar.add(contactMenu);
+        menuBar.add(settingsMenu);
         menuBar.add(helpMenu);
 
         setJMenuBar(menuBar);
@@ -356,9 +373,6 @@ public class CRMGUI extends JFrame {
             Path tempDir = Files.createTempDirectory("crm_preview");
             String tempPdfPath = tempDir.resolve("preview.pdf").toString();
             
-            List<PDFGenerator.ServiceItem> items = parseServiceItems();
-            PDFGenerator generator = new PDFGenerator();
-
             // Hole den ausgewählten Kontakt
             MauticAPI.Contact selectedContact = null;
             for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
@@ -371,7 +385,10 @@ public class CRMGUI extends JFrame {
             if (selectedContact == null) {
                 throw new IOException("Kontakt nicht gefunden");
             }
-
+            
+            List<PDFGenerator.ServiceItem> items = parseServiceItems();
+            config.setPreviewMode(true);  // Aktiviere Vorschau-Modus
+            PDFGenerator generator = new PDFGenerator(config);  // Übergebe config
             generator.generateInvoice(
                 selectedContact,
                 items,
@@ -379,7 +396,8 @@ public class CRMGUI extends JFrame {
                 invoiceDateChooser.getDate(),
                 serviceDateChooser.getDate()
             );
-
+            config.setPreviewMode(false);  // Deaktiviere Vorschau-Modus
+            
             // Öffne PDF mit dem Standardprogramm des Systems
             if (Desktop.isDesktopSupported()) {
                 Desktop.getDesktop().open(new File(tempPdfPath));
@@ -417,47 +435,68 @@ public class CRMGUI extends JFrame {
             return;
         }
 
-        JFileChooser fileChooser = new JFileChooser();
-        fileChooser.setDialogTitle("PDF speichern");
-        fileChooser.setSelectedFile(new File("Rechnung.pdf"));
-        
-        if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
-            try {
-                // Hole den ausgewählten Kontakt
-                MauticAPI.Contact selectedContact = null;
-                for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
-                    if (contact.toString().equals(contactList.getSelectedValue())) {
-                        selectedContact = contact;
-                        break;
-                    }
+        try {
+            // Hole den ausgewählten Kontakt
+            MauticAPI.Contact selectedContact = null;
+            for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
+                if (contact.toString().equals(contactList.getSelectedValue())) {
+                    selectedContact = contact;
+                    break;
                 }
-
-                if (selectedContact == null) {
-                    throw new IOException("Kontakt nicht gefunden");
-                }
-
-                List<PDFGenerator.ServiceItem> items = parseServiceItems();
-                PDFGenerator generator = new PDFGenerator();
-                generator.generateInvoice(
-                    selectedContact,
-                    items,
-                    fileChooser.getSelectedFile().getAbsolutePath(),
-                    invoiceDateChooser.getDate(),
-                    serviceDateChooser.getDate()
-                );
-
-                JOptionPane.showMessageDialog(this,
-                    "PDF wurde erfolgreich erstellt!",
-                    "Erfolg",
-                    JOptionPane.INFORMATION_MESSAGE);
-
-            } catch (Exception ex) {
-                JOptionPane.showMessageDialog(this,
-                    "Fehler beim Erstellen der PDF: " + ex.getMessage(),
-                    "Fehler",
-                    JOptionPane.ERROR_MESSAGE);
-                ex.printStackTrace();
             }
+
+            if (selectedContact == null) {
+                throw new IOException("Kontakt nicht gefunden");
+            }
+
+            // Erstelle Jahresordner
+            int year = LocalDate.now().getYear();
+            Path invoicePath = Paths.get(System.getProperty("user.home"), 
+                "Nextcloud/IT-Service-Rechnungen", String.valueOf(year));
+            Files.createDirectories(invoicePath);
+
+            // Generiere Rechnungsnummer für Dateinamen
+            config.setPreviewMode(false);
+            PDFGenerator generator = new PDFGenerator(config);
+            String invoiceNumber = generator.generateInvoiceNumber(selectedContact);
+
+            // Generiere Dateinamen
+            String fileName = String.format("Graf-Computer-Rechnung-%s-%s-%s-%s.pdf",
+                invoiceNumber,
+                selectedContact.lastname,
+                selectedContact.firstname,
+                LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM-yyyy")));
+            
+            Path pdfPath = invoicePath.resolve(fileName);
+
+            // Generiere PDF
+            generator.generateInvoice(
+                selectedContact,
+                parseServiceItems(),
+                pdfPath.toString(),
+                invoiceDateChooser.getDate(),
+                serviceDateChooser.getDate()
+            );
+
+            // Öffne die erstellte PDF
+            if (Desktop.isDesktopSupported()) {
+                Desktop.getDesktop().open(pdfPath.toFile());
+            }
+
+            // Speichere die erhöhte Rechnungsnummer erst jetzt
+            config.confirmInvoiceNumber();
+
+            JOptionPane.showMessageDialog(this,
+                "PDF wurde erfolgreich erstellt!",
+                "Erfolg",
+                JOptionPane.INFORMATION_MESSAGE);
+
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this,
+                "Fehler beim Erstellen der PDF: " + ex.getMessage(),
+                "Fehler",
+                JOptionPane.ERROR_MESSAGE);
+            ex.printStackTrace();
         }
     }
 
