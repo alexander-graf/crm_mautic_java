@@ -13,6 +13,8 @@ import java.nio.file.Path;
 import java.util.Comparator;
 import java.awt.Desktop;
 import java.util.Locale;
+import java.util.Date;
+import com.toedter.calendar.JDateChooser;
 
 public class CRMGUI extends JFrame {
     private JList<String> contactList;
@@ -26,6 +28,8 @@ public class CRMGUI extends JFrame {
     private MauticAPI mauticAPI;
     private DefaultListModel<String> serviceModel;
     private JList<String> serviceList;
+    private JDateChooser invoiceDateChooser;  // Rechnungsdatum
+    private JDateChooser serviceDateChooser;  // Leistungsdatum
     
     public CRMGUI() {
         setTitle("CRM System");
@@ -131,17 +135,41 @@ public class CRMGUI extends JFrame {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(new TitledBorder("Dienstleistungen"));
 
-        // Linke Seite: Eingabefelder
-        JPanel inputPanel = new JPanel(new GridBagLayout());
+        // Gemeinsame GridBagConstraints für beide Panels
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.anchor = GridBagConstraints.WEST;
 
+        // Datum Panel
+        JPanel datePanel = new JPanel(new GridBagLayout());
+        datePanel.setBorder(new TitledBorder("Datum"));
+
+        // Rechnungsdatum
+        gbc.gridx = 0; gbc.gridy = 0;
+        datePanel.add(new JLabel("Rechnungsdatum:"), gbc);
+        invoiceDateChooser = new JDateChooser();
+        invoiceDateChooser.setDate(new Date());  // Heute als Standard
+        gbc.gridx = 1;
+        datePanel.add(invoiceDateChooser, gbc);
+
+        // Leistungsdatum
+        gbc.gridx = 0; gbc.gridy = 1;
+        datePanel.add(new JLabel("Leistungsdatum:"), gbc);
+        serviceDateChooser = new JDateChooser();
+        serviceDateChooser.setDate(new Date());  // Heute als Standard
+        gbc.gridx = 1;
+        datePanel.add(serviceDateChooser, gbc);
+
+        panel.add(datePanel, BorderLayout.NORTH);
+
+        // Linke Seite: Eingabefelder
+        JPanel inputPanel = new JPanel(new GridBagLayout());
+
         // Dienstleistungen
+        gbc.gridx = 0; gbc.gridy = 0;
         serviceComboBox = new JComboBox<>(new String[]{
             "Beratung", "Entwicklung", "Design", "Support"
         });
-        gbc.gridx = 0; gbc.gridy = 0;
         inputPanel.add(new JLabel("Dienstleistung:"), gbc);
         gbc.gridx = 1;
         inputPanel.add(serviceComboBox, gbc);
@@ -232,6 +260,29 @@ public class CRMGUI extends JFrame {
         // Kontaktlisten-Handler
         contactList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
+                String selectedValue = contactList.getSelectedValue();
+                System.out.println("\n=== Kontaktauswahl Debug ===");
+                System.out.println("Ausgewählter Kontakt: " + selectedValue);
+                
+                try {
+                    for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
+                        if (contact.toString().equals(selectedValue)) {
+                            System.out.println("\n=== Kontaktdetails ===");
+                            System.out.println("Vorname: " + contact.firstname);
+                            System.out.println("Nachname: " + contact.lastname);
+                            System.out.println("Firma: " + contact.company);
+                            System.out.println("Straße: " + contact.street);
+                            System.out.println("Hausnummer: " + contact.number);
+                            System.out.println("PLZ: " + contact.zipcode);
+                            System.out.println("Stadt: " + contact.city);
+                            break;
+                        }
+                    }
+                } catch (IOException ex) {
+                    System.out.println("Fehler beim Laden der Kontaktdetails: " + ex.getMessage());
+                    ex.printStackTrace();
+                }
+                
                 updatePreview();
             }
         });
@@ -307,10 +358,26 @@ public class CRMGUI extends JFrame {
             
             List<PDFGenerator.ServiceItem> items = parseServiceItems();
             PDFGenerator generator = new PDFGenerator();
+
+            // Hole den ausgewählten Kontakt
+            MauticAPI.Contact selectedContact = null;
+            for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
+                if (contact.toString().equals(contactList.getSelectedValue())) {
+                    selectedContact = contact;
+                    break;
+                }
+            }
+
+            if (selectedContact == null) {
+                throw new IOException("Kontakt nicht gefunden");
+            }
+
             generator.generateInvoice(
-                contactList.getSelectedValue(),
+                selectedContact,
                 items,
-                tempPdfPath
+                tempPdfPath,
+                invoiceDateChooser.getDate(),
+                serviceDateChooser.getDate()
             );
 
             // Öffne PDF mit dem Standardprogramm des Systems
@@ -356,12 +423,27 @@ public class CRMGUI extends JFrame {
         
         if (fileChooser.showSaveDialog(this) == JFileChooser.APPROVE_OPTION) {
             try {
+                // Hole den ausgewählten Kontakt
+                MauticAPI.Contact selectedContact = null;
+                for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
+                    if (contact.toString().equals(contactList.getSelectedValue())) {
+                        selectedContact = contact;
+                        break;
+                    }
+                }
+
+                if (selectedContact == null) {
+                    throw new IOException("Kontakt nicht gefunden");
+                }
+
                 List<PDFGenerator.ServiceItem> items = parseServiceItems();
                 PDFGenerator generator = new PDFGenerator();
                 generator.generateInvoice(
-                    contactList.getSelectedValue(),
+                    selectedContact,
                     items,
-                    fileChooser.getSelectedFile().getAbsolutePath()
+                    fileChooser.getSelectedFile().getAbsolutePath(),
+                    invoiceDateChooser.getDate(),
+                    serviceDateChooser.getDate()
                 );
 
                 JOptionPane.showMessageDialog(this,

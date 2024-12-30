@@ -4,8 +4,10 @@ import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.text.SimpleDateFormat;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Date;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -19,29 +21,33 @@ public class PDFGenerator {
         this.templatePath = System.getProperty("user.home") + "/Vorlagen/rechnungs_vorlage_graf.tex";
     }
 
-    public void generateInvoice(String customer, List<ServiceItem> items, String outputPath) throws IOException {
+    public void generateInvoice(MauticAPI.Contact contact, List<ServiceItem> items, 
+            String outputPath, Date invoiceDate, Date serviceDate) throws IOException {
         System.out.println("=== PDF Generierung startet ===");
         System.out.println("Template Pfad: " + templatePath);
         System.out.println("Output Pfad: " + outputPath);
-        System.out.println("Kunde: " + customer);
+        System.out.println("Kunde: " + contact.firstname + " " + contact.lastname);
         
         String template = Files.readString(Paths.get(templatePath));
         System.out.println("Template geladen, Länge: " + template.length());
         
-        String today = LocalDate.now().format(DATE_FORMATTER);
-        System.out.println("Datum formatiert: " + today);
+        // Formatiere die Daten
+        String invoiceDateStr = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMAN)
+            .format(invoiceDate);
+        String serviceDateStr = new SimpleDateFormat("dd.MM.yyyy", Locale.GERMAN)
+            .format(serviceDate);
         
         // Ersetze Platzhalter
         String tex = template
             .replace("\\newcommand{\\rechnungsdatum}{\\VAR{01.06.2023}}", 
-                    "\\newcommand{\\rechnungsdatum}{\\VAR{" + today + "}}")
+                    "\\newcommand{\\rechnungsdatum}{\\VAR{" + invoiceDateStr + "}}")
             .replace("\\newcommand{\\leistungsdatum}{\\VAR{15.05.2023}}", 
-                    "\\newcommand{\\leistungsdatum}{\\VAR{" + today + "}}")
+                    "\\newcommand{\\leistungsdatum}{\\VAR{" + serviceDateStr + "}}")
             .replace("\\newcommand{\\rechnungsnummer}{\\VAR{RE2023-001}}", 
                     "\\newcommand{\\rechnungsnummer}{\\VAR{" + generateInvoiceNumber() + "}}");
 
         // Kundenname aufteilen
-        String[] nameParts = customer.split(" ", 2);
+        String[] nameParts = (contact.firstname + " " + contact.lastname).split(" ", 2);
         String firstName = nameParts[0];
         String lastName = nameParts.length > 1 ? nameParts[1] : "";
 
@@ -55,22 +61,30 @@ public class PDFGenerator {
 
         tex = tex
             .replace("\\newcommand{\\anrede}{\\VAR{Sehr geehrter Herr Mustermann,}}", 
-                    "\\newcommand{\\anrede}{\\VAR{" + anrede + " " + lastName + ",}}")
+                    "\\newcommand{\\anrede}{\\VAR{" + anrede + " " + contact.lastname + ",}}")
             .replace("\\newcommand{\\vorname}{\\VAR{Max}}", 
-                    "\\newcommand{\\vorname}{\\VAR{" + firstName + "}}")
+                    "\\newcommand{\\vorname}{\\VAR{" + contact.firstname + "}}")
             .replace("\\newcommand{\\name}{\\VAR{Mustermann}}", 
-                    "\\newcommand{\\name}{\\VAR{" + lastName + "}}")
-            // Leere Felder für nicht verwendete Variablen
+                    "\\newcommand{\\name}{\\VAR{" + contact.lastname + "}}")
+            // Adressfelder mit den tatsächlichen Werten
             .replace("\\newcommand{\\firma}{\\VAR{}}",
-                    "\\newcommand{\\firma}{\\VAR{}}")
+                    "\\newcommand{\\firma}{\\VAR{" + (contact.company != null ? contact.company : "") + "}}")
             .replace("\\newcommand{\\strasse}{\\VAR{Musterstraße}}",
-                    "\\newcommand{\\strasse}{\\VAR{}}")
+                    "\\newcommand{\\strasse}{\\VAR{" + (contact.street != null ? contact.street : "") + "}}")
             .replace("\\newcommand{\\hausnummer}{\\VAR{123}}",
-                    "\\newcommand{\\hausnummer}{\\VAR{}}")
+                    "\\newcommand{\\hausnummer}{\\VAR{" + (contact.number != null ? contact.number : "") + "}}")
             .replace("\\newcommand{\\postleitzahl}{\\VAR{12345}}",
-                    "\\newcommand{\\postleitzahl}{\\VAR{}}")
+                    "\\newcommand{\\postleitzahl}{\\VAR{" + (contact.zipcode != null ? contact.zipcode : "") + "}}")
             .replace("\\newcommand{\\ort}{\\VAR{Musterstadt}}",
-                    "\\newcommand{\\ort}{\\VAR{}}");
+                    "\\newcommand{\\ort}{\\VAR{" + (contact.city != null ? contact.city : "") + "}}");
+
+        // Debug-Ausgabe der Adressfelder
+        System.out.println("\n=== Adressfelder für LaTeX ===");
+        System.out.println("Firma: " + contact.company);
+        System.out.println("Straße: " + contact.street);
+        System.out.println("Hausnummer: " + contact.number);
+        System.out.println("PLZ: " + contact.zipcode);
+        System.out.println("Ort: " + contact.city);
 
         // Dienstleistungen eintragen
         AtomicInteger pos = new AtomicInteger(1);

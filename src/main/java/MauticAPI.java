@@ -1,6 +1,7 @@
 import com.google.gson.Gson;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
 import okhttp3.*;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -43,35 +44,51 @@ public class MauticAPI {
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful()) throw new IOException("Fehler " + response);
             
-            JsonObject jsonResponse = gson.fromJson(response.body().string(), JsonObject.class);
+            String responseBody = response.body().string();
+            System.out.println("\n=== API Response Debug ===");
+            System.out.println(responseBody);
+            
+            JsonObject jsonResponse = gson.fromJson(responseBody, JsonObject.class);
             List<Contact> result = new ArrayList<>();
             
             if (jsonResponse.has("contacts")) {
                 JsonObject contactsObj = jsonResponse.getAsJsonObject("contacts");
                 contactsObj.entrySet().forEach(entry -> {
                     JsonObject contactObj = entry.getValue().getAsJsonObject();
-                    String firstname = "";
-                    String lastname = "";
+                    System.out.println("\n=== Kontakt Debug ===");
+                    System.out.println("Contact ID: " + entry.getKey());
+                    System.out.println(gson.toJson(contactObj));
                     
                     if (contactObj.has("fields") && 
                         contactObj.getAsJsonObject("fields").has("core")) {
                         JsonObject core = contactObj.getAsJsonObject("fields").getAsJsonObject("core");
                         
-                        if (core.has("firstname") && 
-                            core.getAsJsonObject("firstname").has("value")) {
-                            firstname = core.getAsJsonObject("firstname")
-                                          .get("value").getAsString();
-                        }
+                        System.out.println("\n=== Core Fields Debug ===");
+                        core.entrySet().forEach(field -> {
+                            System.out.println(field.getKey() + ": " + field.getValue());
+                        });
+
+                        // Sicheres Abrufen der Felder
+                        String firstname = getFieldValueSafe(core, "firstname");
+                        String lastname = getFieldValueSafe(core, "lastname");
+                        String company = getFieldValueSafe(core, "company");
+                        String street = getFieldValueSafe(core, "address1");
+                        String number = getFieldValueSafe(core, "address2");
+                        String zipcode = getFieldValueSafe(core, "zipcode");
+                        String city = getFieldValueSafe(core, "city");
                         
-                        if (core.has("lastname") && 
-                            core.getAsJsonObject("lastname").has("value")) {
-                            lastname = core.getAsJsonObject("lastname")
-                                         .get("value").getAsString();
+                        System.out.println("\n=== Extrahierte Felder ===");
+                        System.out.println("Vorname: " + firstname);
+                        System.out.println("Nachname: " + lastname);
+                        System.out.println("Firma: " + company);
+                        System.out.println("Straße: " + street);
+                        System.out.println("Hausnummer: " + number);
+                        System.out.println("PLZ: " + zipcode);
+                        System.out.println("Stadt: " + city);
+                        
+                        if (!firstname.isEmpty() || !lastname.isEmpty()) {
+                            result.add(new Contact(firstname, lastname, company, street, number, zipcode, city));
                         }
-                    }
-                    
-                    if (!firstname.isEmpty() || !lastname.isEmpty()) {
-                        result.add(new Contact(firstname, lastname));
                     }
                 });
             }
@@ -80,13 +97,44 @@ public class MauticAPI {
         }
     }
 
-    public static class Contact {
-        private final String firstname;
-        private final String lastname;
+    private String getFieldValueSafe(JsonObject core, String fieldName) {
+        try {
+            if (core.has(fieldName)) {
+                JsonElement fieldElement = core.get(fieldName);
+                if (!fieldElement.isJsonNull() && 
+                    fieldElement.isJsonObject() && 
+                    fieldElement.getAsJsonObject().has("value")) {
+                    
+                    JsonElement valueElement = fieldElement.getAsJsonObject().get("value");
+                    if (!valueElement.isJsonNull()) {
+                        return valueElement.getAsString();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            System.out.println("Fehler beim Lesen von Feld " + fieldName + ": " + e.getMessage());
+        }
+        return "";
+    }
 
-        public Contact(String firstname, String lastname) {
+    public static class Contact {
+        public final String firstname;
+        public final String lastname;
+        public final String company;
+        public final String street;
+        public final String number;
+        public final String zipcode;
+        public final String city;
+
+        public Contact(String firstname, String lastname, String company, 
+                      String street, String number, String zipcode, String city) {
             this.firstname = firstname;
             this.lastname = lastname;
+            this.company = company;
+            this.street = street;
+            this.number = number;
+            this.zipcode = zipcode;
+            this.city = city;
         }
 
         @Override
