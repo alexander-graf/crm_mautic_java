@@ -16,6 +16,18 @@ public class Config {
     private int lastYear = LocalDate.now().getYear();
     private boolean isPreview = false;
     private int tempNextNumber;
+    private String mauticApiUrl = "https://mautic.alexander-graf.de";
+    private String templatePath = System.getProperty("user.home") + "/Vorlagen/rechnungs_vorlage_graf.tex";
+    private String invoicePath = System.getProperty("user.home") + "/Nextcloud/IT-Service-Rechnungen";
+    private String smtpHost = "w0196dc7.kasserver.com";
+    private int smtpPort = 587;
+    private String smtpUsername = "";
+    private String smtpPassword = "";
+    private String senderEmail = "rechnung@alexander-graf.de";
+    private String emailTemplate = "Sehr geehrte(r) %%ANREDE%% %%NACHNAME%%,\n\n" +
+        "anbei erhalten Sie die Rechnung %%RECHNUNGSNUMMER%% vom %%RECHNUNGSDATUM%%.\n\n" +
+        "Mit freundlichen Grüßen\n" +
+        "Alexander Graf";
 
     public static Config load() throws IOException {
         Files.createDirectories(Paths.get(CONFIG_DIR));
@@ -79,5 +91,78 @@ public class Config {
                 e.printStackTrace();
             }
         }
+    }
+
+    public String getMauticApiUrl() {
+        return mauticApiUrl;
+    }
+    
+    public void setMauticApiUrl(String url) {
+        this.mauticApiUrl = url;
+    }
+    
+    public String getTemplatePath() {
+        return templatePath;
+    }
+    
+    public void setTemplatePath(String path) {
+        this.templatePath = path;
+    }
+    
+    public String getInvoicePath() {
+        return invoicePath;
+    }
+    
+    public void setInvoicePath(String path) {
+        this.invoicePath = path;
+    }
+
+    // Getter und Setter für E-Mail-Einstellungen
+    public String getSmtpHost() {
+        return smtpHost;
+    }
+
+    public void setSmtpHost(String host) {
+        this.smtpHost = host;
+    }
+
+    public int getSmtpPort() {
+        return smtpPort;
+    }
+
+    public void setSmtpPort(int port) {
+        this.smtpPort = port;
+    }
+
+    public String getSmtpUsername() {
+        return smtpUsername;
+    }
+
+    public void setSmtpUsername(String username) {
+        this.smtpUsername = username;
+    }
+
+    public String getSmtpPassword() {
+        return smtpPassword;
+    }
+
+    public void setSmtpPassword(String password) {
+        this.smtpPassword = password;
+    }
+
+    public String getSenderEmail() {
+        return senderEmail;
+    }
+
+    public void setSenderEmail(String email) {
+        this.senderEmail = email;
+    }
+
+    public String getEmailTemplate() {
+        return emailTemplate;
+    }
+
+    public void setEmailTemplate(String template) {
+        this.emailTemplate = template;
     }
 } 

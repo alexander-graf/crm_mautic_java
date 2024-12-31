@@ -19,6 +19,10 @@ import java.util.Properties;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.nio.file.Paths;
+import java.util.Map;
+import java.util.HashMap;
+import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.LogManager;
 
 public class CRMGUI extends JFrame {
     private JList<String> contactList;
@@ -35,6 +39,10 @@ public class CRMGUI extends JFrame {
     private JDateChooser invoiceDateChooser;  // Rechnungsdatum
     private JDateChooser serviceDateChooser;  // Leistungsdatum
     private Config config;  // Am Anfang der Klasse bei den anderen Variablen
+    private JSpinner kmSpinner;  // Neues Feld für Kilometer
+    private JPanel kmPanel;      // Panel für Kilometer-Eingabe
+    private Map<String, MauticAPI.Contact> contactCache;  // Cache für Kontakte
+    private static final Logger logger = LogManager.getLogger(CRMGUI.class);
     
     public CRMGUI() {
         setTitle("CRM System");
@@ -74,10 +82,12 @@ public class CRMGUI extends JFrame {
 
         addEventHandlers();
 
+        contactCache = new HashMap<>();  // Cache initialisieren
+        
         try {
-            config = Config.load();  // Lade Konfiguration
+            config = Config.load();
             mauticAPI = new MauticAPI("https://mautic.alexander-graf.de");
-            loadContacts();  // Initial laden
+            loadContactsInitial();  // Initial laden mit Cache-Befüllung
         } catch (IOException ex) {
             JOptionPane.showMessageDialog(this,
                 "Fehler beim Laden der Konfiguration: " + ex.getMessage(),
@@ -101,12 +111,26 @@ public class CRMGUI extends JFrame {
         fileMenu.addSeparator();
         fileMenu.add(exitItem);
 
-        contactMenu.add(new JMenuItem("Kontakt hinzufügen"));
-        contactMenu.add(new JMenuItem("Kontakt bearbeiten"));
-        contactMenu.add(new JMenuItem("Kontakt löschen"));
+        JMenuItem addContactItem = new JMenuItem("Kontakt hinzufügen");
+        JMenuItem editContactItem = new JMenuItem("Kontakt bearbeiten");
+        JMenuItem deleteContactItem = new JMenuItem("Kontakt löschen");
+        deleteContactItem.addActionListener(e -> deleteContact());  // Verbinde mit der Löschfunktion
+
+        contactMenu.add(addContactItem);
+        contactMenu.add(editContactItem);
+        contactMenu.add(deleteContactItem);
 
         JMenuItem reloadItem = new JMenuItem("Kontakte neu laden");
-        reloadItem.addActionListener(e -> loadContacts());
+        reloadItem.addActionListener(e -> {
+            try {
+                loadContactsInitial();  // Nur wenn wirklich ein kompletter Reload gewünscht ist
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(this,
+                    "Fehler beim Laden der Kontakte: " + ex.getMessage(),
+                    "Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        });
         contactMenu.add(reloadItem);
 
         // Nur noch Rechnungsnummer-Dialog
@@ -118,41 +142,109 @@ public class CRMGUI extends JFrame {
         
         settingsMenu.add(numberItem);
 
+        JMenuItem settingsItem = new JMenuItem("Einstellungen");
+        settingsItem.addActionListener(e -> {
+            SettingsDialog dialog = new SettingsDialog(this, config);
+            if (dialog.showDialog()) {
+                // Speichere die neuen Einstellungen
+                config.setMauticApiUrl(dialog.getApiUrl());
+                config.setTemplatePath(dialog.getTemplatePath());
+                config.setInvoicePath(dialog.getInvoicePath());
+                try {
+                    config.save();
+                } catch (IOException ex) {
+                    logger.error("Fehler beim Speichern der Konfiguration", ex);
+                    JOptionPane.showMessageDialog(this,
+                        "Fehler beim Speichern der Einstellungen: " + ex.getMessage(),
+                        "Fehler",
+                        JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+        settingsMenu.add(settingsItem);
+
         menuBar.add(fileMenu);
         menuBar.add(contactMenu);
         menuBar.add(settingsMenu);
         menuBar.add(helpMenu);
 
         setJMenuBar(menuBar);
+
+        addContactItem.addActionListener(e -> createContact());
     }
 
     private JPanel createContactPanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(new TitledBorder("Kontakte"));
-        panel.setPreferredSize(new Dimension(250, 0));
+        panel.setPreferredSize(new Dimension(320, 0));
 
         contactModel = new DefaultListModel<>();
-        contactModel.addElement("Max Mustermann");
-        contactModel.addElement("Erika Musterfrau");
         contactList = new JList<>(contactModel);
 
         JScrollPane scrollPane = new JScrollPane(contactList);
         panel.add(scrollPane, BorderLayout.CENTER);
 
-        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        buttonPanel.add(new JButton("Neu"));
-        buttonPanel.add(new JButton("Bearbeiten"));
-        buttonPanel.add(new JButton("Löschen"));
+        // Button-Panel mit mehr Platz
+        JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 5));
+        
+        JButton newButton = new JButton("Neu");
+        JButton editButton = new JButton("Bearbeiten");
+        JButton deleteButton = new JButton("Löschen");
+        
+        newButton.addActionListener(e -> createContact());
+        editButton.addActionListener(e -> editContact());
+        deleteButton.addActionListener(e -> deleteContact());
+        
+        buttonPanel.add(newButton);
+        buttonPanel.add(editButton);
+        buttonPanel.add(deleteButton);
+        
         panel.add(buttonPanel, BorderLayout.SOUTH);
 
         return panel;
+    }
+
+    private void deleteContact() {
+        String selectedContact = contactList.getSelectedValue();
+        if (selectedContact == null) {
+            JOptionPane.showMessageDialog(this,
+                "Bitte wählen Sie einen Kontakt zum Löschen aus.",
+                "Kein Kontakt ausgewählt",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Kontakt aus dem Cache holen
+        MauticAPI.Contact contact = contactCache.get(selectedContact);
+        if (contact != null) {
+            int confirm = JOptionPane.showConfirmDialog(this,
+                "Möchten Sie den Kontakt '" + selectedContact + "' wirklich löschen?",
+                "Kontakt löschen",
+                JOptionPane.YES_NO_OPTION,
+                JOptionPane.WARNING_MESSAGE);
+
+            if (confirm == JOptionPane.YES_OPTION) {
+                try {
+                    mauticAPI.deleteContact(contact.id);
+                    contactCache.remove(selectedContact);    // Aus Cache entfernen
+                    contactModel.removeElement(selectedContact);  // Aus Liste entfernen
+                    previewArea.setText("");
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(this,
+                        "Fehler beim Löschen des Kontakts: " + ex.getMessage(),
+                        "Fehler",
+                        JOptionPane.ERROR_MESSAGE);
+                    ex.printStackTrace();
+                }
+            }
+        }
     }
 
     private JPanel createServicePanel() {
         JPanel panel = new JPanel(new BorderLayout());
         panel.setBorder(new TitledBorder("Dienstleistungen"));
 
-        // Gemeinsame GridBagConstraints für beide Panels
+        // Gemeinsame GridBagConstraints für alle Panels
         GridBagConstraints gbc = new GridBagConstraints();
         gbc.insets = new Insets(5, 5, 5, 5);
         gbc.anchor = GridBagConstraints.WEST;
@@ -225,35 +317,52 @@ public class CRMGUI extends JFrame {
 
         // Linke Seite: Eingabefelder
         JPanel inputPanel = new JPanel(new GridBagLayout());
-
+        
         // Dienstleistungen
         gbc.gridx = 0; gbc.gridy = 0;
-        serviceComboBox = new JComboBox<>(new String[]{
-            "Beratung", "Entwicklung", "Design", "Support"
-        });
+        gbc.weightx = 0.0;  // Label soll nicht wachsen
+        gbc.fill = GridBagConstraints.HORIZONTAL;  // Füllt horizontal
         inputPanel.add(new JLabel("Dienstleistung:"), gbc);
+        
         gbc.gridx = 1;
+        gbc.weightx = 1.0;  // ComboBox soll den verfügbaren Platz nutzen
+        serviceComboBox = new JComboBox<>(new String[]{
+            "Fernwartung (60,00 €/Std)",
+            "Vor-Ort-Service (60,00 €/Std)",
+            "Anfahrt"
+        });
+        serviceComboBox.setPreferredSize(new Dimension(200, 25));
+        serviceComboBox.setSelectedItem("Fernwartung (60,00 €/Std)");  // Setze initialen Wert
         inputPanel.add(serviceComboBox, gbc);
 
-        // Stunden
-        hoursSpinner = new JSpinner(new SpinnerNumberModel(1, 1, 100, 0.5));
+        // Kilometer-Panel
         gbc.gridx = 0; gbc.gridy = 1;
-        inputPanel.add(new JLabel("Stunden:"), gbc);
+        gbc.weightx = 0.0;
+        inputPanel.add(new JLabel("Kilometer:"), gbc);
+        
         gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        kmSpinner = new JSpinner(new SpinnerNumberModel(0, 0, 200, 1));
+        kmSpinner.setPreferredSize(new Dimension(80, 25));
+        inputPanel.add(kmSpinner, gbc);
+
+        // Stunden
+        gbc.gridx = 0; gbc.gridy = 2;
+        gbc.weightx = 0.0;
+        inputPanel.add(new JLabel("Stunden:"), gbc);
+        
+        gbc.gridx = 1;
+        gbc.weightx = 1.0;
+        hoursSpinner = new JSpinner(new SpinnerNumberModel(1.0, 0.5, 100.0, 0.5));
+        hoursSpinner.setPreferredSize(new Dimension(80, 25));
         inputPanel.add(hoursSpinner, gbc);
 
-        // Stundensatz
-        rateField = new JTextField("85.00", 10);
-        gbc.gridx = 0; gbc.gridy = 2;
-        inputPanel.add(new JLabel("€/Stunde:"), gbc);
-        gbc.gridx = 1;
-        inputPanel.add(rateField, gbc);
-
         // Hinzufügen-Button
-        JButton addButton = new JButton("Hinzufügen");
         gbc.gridx = 0; gbc.gridy = 3;
         gbc.gridwidth = 2;
+        gbc.weightx = 1.0;
         gbc.anchor = GridBagConstraints.CENTER;
+        JButton addButton = new JButton("Hinzufügen");
         inputPanel.add(addButton, gbc);
 
         panel.add(inputPanel, BorderLayout.WEST);
@@ -275,19 +384,77 @@ public class CRMGUI extends JFrame {
         addButton.addActionListener(e -> addServiceItem());
         deleteButton.addActionListener(e -> deleteServiceItem());
 
+        // Service-Auswahl Listener
+        serviceComboBox.addActionListener(e -> {
+            String selected = (String) serviceComboBox.getSelectedItem();
+            boolean isAnfahrt = selected != null && selected.startsWith("Anfahrt");
+            
+            // Kilometer nur bei Anfahrt zeigen
+            kmSpinner.setEnabled(isAnfahrt);
+            kmSpinner.setVisible(isAnfahrt);
+            inputPanel.getComponent(2).setVisible(isAnfahrt);  // "Kilometer:" Label
+            
+            // Stunden nur bei Fernwartung/Vor-Ort-Service zeigen
+            hoursSpinner.setEnabled(!isAnfahrt);
+            hoursSpinner.setVisible(!isAnfahrt);
+            inputPanel.getComponent(4).setVisible(!isAnfahrt);  // "Stunden:" Label
+            
+            updatePreview();
+        });
+
+        // Initial die richtigen Komponenten verstecken
+        kmSpinner.setVisible(false);
+        kmSpinner.setEnabled(false);
+        inputPanel.getComponent(2).setVisible(false);  // "Kilometer:" Label verstecken
+        hoursSpinner.setVisible(true);
+        hoursSpinner.setEnabled(true);
+
         return panel;
     }
 
     private void addServiceItem() {
-        String service = (String) serviceComboBox.getSelectedItem();
-        double hours = (Double) hoursSpinner.getValue();
-        double rate = Double.parseDouble(rateField.getText());
-        double total = hours * rate;
+        String selectedService = (String) serviceComboBox.getSelectedItem();
+        
+        if (selectedService.startsWith("Anfahrt")) {
+            int km = (Integer) kmSpinner.getValue();
+            double cost = calculateTravelCost(km);
+            String item = String.format("Anfahrt (%d km): %.2f €", km, cost);
+            serviceModel.addElement(item);
+        } else {
+            // Standardpreis für Dienstleistungen
+            double rate = selectedService.startsWith("Fernwartung") ? 60.0 : 60.0;
+            double hours = (Double) hoursSpinner.getValue();
+            double total = hours * rate;
 
-        String item = String.format("%s: %.1f Std. × %.2f € = %.2f €", 
-            service, hours, rate, total);
-        serviceModel.addElement(item);
+            String service = selectedService.split(" \\(")[0];  // Entferne Preisinfo
+            String item = String.format("%s: %.1f Std. × %.2f € = %.2f €", 
+                service, hours, rate, total);
+            serviceModel.addElement(item);
+        }
         updatePreview();
+    }
+
+    private double calculateTravelCost(int km) {
+        if (km <= 10) {
+            return 20.0;  // Pauschale bis 10 km
+        }
+        
+        double cost = 20.0;  // Grundpauschale
+        int remainingKm = km - 10;  // Verbleibende Kilometer
+
+        if (remainingKm > 0) {
+            if (km <= 20) {
+                cost += remainingKm * 0.50;
+            } else if (km <= 30) {
+                cost += 10 * 0.50 + (remainingKm - 10) * 0.75;
+            } else if (km <= 40) {
+                cost += 10 * 0.50 + 10 * 0.75 + (remainingKm - 20) * 1.00;
+            } else {
+                cost += 10 * 0.50 + 10 * 0.75 + 10 * 1.00 + (remainingKm - 30) * 1.25;
+            }
+        }
+
+        return cost;
     }
 
     private void deleteServiceItem() {
@@ -321,41 +488,53 @@ public class CRMGUI extends JFrame {
         // Kontaktlisten-Handler
         contactList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
-                String selectedValue = contactList.getSelectedValue();
-                System.out.println("\n=== Kontaktauswahl Debug ===");
-                System.out.println("Ausgewählter Kontakt: " + selectedValue);
-                
-                try {
-                    for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
-                        if (contact.toString().equals(selectedValue)) {
-                            System.out.println("\n=== Kontaktdetails ===");
-                            System.out.println("Vorname: " + contact.firstname);
-                            System.out.println("Nachname: " + contact.lastname);
-                            System.out.println("Firma: " + contact.company);
-                            System.out.println("Straße: " + contact.street);
-                            System.out.println("Hausnummer: " + contact.number);
-                            System.out.println("PLZ: " + contact.zipcode);
-                            System.out.println("Stadt: " + contact.city);
-                            break;
-                        }
+                String selectedContactName = contactList.getSelectedValue();
+                if (selectedContactName != null) {
+                    // Kontakt aus dem Cache holen
+                    MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
+                    if (selectedContact != null) {
+                        // Debug-Ausgabe (optional)
+                        System.out.println("\n=== Kontaktauswahl Debug ===");
+                        System.out.println("Ausgewählter Kontakt: " + selectedContactName);
+                        System.out.println("Aus Cache geladen:");
+                        System.out.println("Vorname: " + selectedContact.firstname);
+                        System.out.println("Nachname: " + selectedContact.lastname);
+                        System.out.println("Firma: " + selectedContact.company);
+                        System.out.println("Straße: " + selectedContact.street);
+                        System.out.println("PLZ: " + selectedContact.zipcode);
+                        System.out.println("Stadt: " + selectedContact.city);
+                        
+                        // Aktualisiere die Vorschau
+                        updatePreview(selectedContact);
                     }
-                } catch (IOException ex) {
-                    System.out.println("Fehler beim Laden der Kontaktdetails: " + ex.getMessage());
-                    ex.printStackTrace();
+                } else {
+                    previewArea.setText("");
                 }
-                
-                updatePreview();
             }
         });
 
         // Service-Änderungs-Handler
         serviceComboBox.addActionListener(e -> updatePreview());
         hoursSpinner.addChangeListener(e -> updatePreview());
-        rateField.addPropertyChangeListener("value", e -> updatePreview());
 
         // PDF-Button-Handler
         previewButton.addActionListener(e -> showPDFPreview());
         createButton.addActionListener(e -> createInvoice());
+
+        // Kontaktauswahl-Listener
+        contactList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                String selectedContactName = contactList.getSelectedValue();
+                if (selectedContactName != null) {
+                    // Kontakt aus dem Cache holen
+                    MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
+                    if (selectedContact != null) {
+                        // Aktualisiere die Vorschau oder andere UI-Elemente
+                        updatePreview(selectedContact);
+                    }
+                }
+            }
+        });
     }
 
     private void updatePreview() {
@@ -372,17 +551,44 @@ public class CRMGUI extends JFrame {
             String item = serviceModel.getElementAt(i);
             preview.append(item).append("\n");
             
-            // Extrahiere den Gesamtbetrag aus dem String
             try {
-                String totalStr = item.substring(item.lastIndexOf("=") + 1, item.length() - 1).trim()
-                    .replace("€", "").replace(",", ".").trim();
-                total += Double.parseDouble(totalStr);
+                if (item.contains("Anfahrt")) {
+                    // Format: "Anfahrt (X km): YY,YY €"
+                    String totalStr = item.substring(item.lastIndexOf(":") + 1)
+                        .replace("€", "")  // Entferne €-Zeichen
+                        .replace(",", ".")  // Ersetze Komma durch Punkt
+                        .trim();           // Entferne Leerzeichen
+                    total += Double.parseDouble(totalStr);
+                } else {
+                    // Format: "Service: X,X Std. × YY,YY € = ZZ,ZZ €"
+                    String totalStr = item.substring(item.lastIndexOf("=") + 1)
+                        .replace("€", "")  // Entferne €-Zeichen
+                        .replace(",", ".")  // Ersetze Komma durch Punkt
+                        .trim();           // Entferne Leerzeichen
+                    total += Double.parseDouble(totalStr);
+                }
             } catch (Exception e) {
+                System.err.println("Fehler beim Parsen von: " + item);
                 e.printStackTrace();
             }
         }
         
+        // Formatiere den Gesamtbetrag mit deutschem Format (Komma statt Punkt)
         preview.append("\nGesamtbetrag: ").append(String.format(Locale.GERMAN, "%.2f €", total));
+        previewArea.setText(preview.toString());
+    }
+
+    private void updatePreview(MauticAPI.Contact contact) {
+        // Aktualisiere die Vorschau mit den Kontaktdaten
+        StringBuilder preview = new StringBuilder();
+        preview.append("Kontaktdetails:\n\n");
+        preview.append("Name: ").append(contact.firstname).append(" ").append(contact.lastname).append("\n");
+        preview.append("E-Mail: ").append(contact.email).append("\n");
+        preview.append("Firma: ").append(contact.company).append("\n");
+        preview.append("Adresse:\n");
+        preview.append(contact.street).append("\n");
+        preview.append(contact.zipcode).append(" ").append(contact.city);
+        
         previewArea.setText(preview.toString());
     }
 
@@ -391,15 +597,30 @@ public class CRMGUI extends JFrame {
         
         for (int i = 0; i < serviceModel.size(); i++) {
             String item = serviceModel.getElementAt(i);
-            String[] parts = item.split(":");
-            String service = parts[0].trim();
-            String[] details = parts[1].split("×");
-            double hours = Double.parseDouble(
-                details[0].replace("Std.", "").trim().replace(",", "."));
-            double rate = Double.parseDouble(
-                details[1].split("=")[0].replace("€", "").trim().replace(",", "."));
             
-            items.add(new PDFGenerator.ServiceItem(service, hours, rate));
+            if (item.contains("Anfahrt")) {
+                // Format: "Anfahrt (X km): YY,YY €"
+                String[] parts = item.split(":");
+                String service = parts[0].trim();  // "Anfahrt (X km)"
+                double cost = Double.parseDouble(
+                    parts[1].replace("€", "").replace(",", ".").trim()
+                );
+                // Anfahrt als 1 Stunde mit dem berechneten Preis
+                items.add(new PDFGenerator.ServiceItem(service, 1.0, cost));
+            } else {
+                // Format: "Service: X,X Std. × YY,YY € = ZZ,ZZ €"
+                String[] parts = item.split(":");
+                String service = parts[0].trim();
+                String[] details = parts[1].split("×");
+                double hours = Double.parseDouble(
+                    details[0].replace("Std.", "").trim().replace(",", ".")
+                );
+                double rate = Double.parseDouble(
+                    details[1].split("=")[0].replace("€", "").trim().replace(",", ".")
+                );
+                
+                items.add(new PDFGenerator.ServiceItem(service, hours, rate));
+            }
         }
         return items;
     }
@@ -458,14 +679,9 @@ public class CRMGUI extends JFrame {
             Path tempDir = Files.createTempDirectory("crm_preview");
             String tempPdfPath = tempDir.resolve("preview.pdf").toString();
             
-            // Hole den ausgewählten Kontakt
-            MauticAPI.Contact selectedContact = null;
-            for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
-                if (contact.toString().equals(contactList.getSelectedValue())) {
-                    selectedContact = contact;
-                    break;
-                }
-            }
+            // Hole den ausgewählten Kontakt aus dem Cache
+            String selectedContactName = contactList.getSelectedValue();
+            MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
 
             if (selectedContact == null) {
                 throw new IOException("Kontakt nicht gefunden");
@@ -525,15 +741,10 @@ public class CRMGUI extends JFrame {
         }
 
         try {
-            // Hole den ausgewählten Kontakt
-            MauticAPI.Contact selectedContact = null;
-            for (MauticAPI.Contact contact : mauticAPI.getContacts()) {
-                if (contact.toString().equals(contactList.getSelectedValue())) {
-                    selectedContact = contact;
-                    break;
-                }
-            }
-
+            // Hole den ausgewählten Kontakt aus dem Cache
+            String selectedContactName = contactList.getSelectedValue();
+            MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
+            
             if (selectedContact == null) {
                 throw new IOException("Kontakt nicht gefunden");
             }
@@ -593,19 +804,77 @@ public class CRMGUI extends JFrame {
         }
     }
 
-    private void loadContacts() {
-        try {
-            List<MauticAPI.Contact> contacts = mauticAPI.getContacts();
-            
-            contactModel.clear();
-            for (MauticAPI.Contact contact : contacts) {
-                contactModel.addElement(contact.toString());
-            }
-        } catch (IOException ex) {
+    private void editContact() {
+        String selectedContact = contactList.getSelectedValue();
+        if (selectedContact == null) {
             JOptionPane.showMessageDialog(this,
-                "Fehler beim Laden der Kontakte: " + ex.getMessage(),
-                "Fehler",
-                JOptionPane.ERROR_MESSAGE);
+                "Bitte wählen Sie einen Kontakt zum Bearbeiten aus.",
+                "Kein Kontakt ausgewählt",
+                JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+
+        // Kontakt direkt aus dem Cache holen
+        MauticAPI.Contact contact = contactCache.get(selectedContact);
+        if (contact != null) {
+            EditContactDialog dialog = new EditContactDialog(this, contact, mauticAPI);
+            if (dialog.showDialog()) {
+                try {
+                    MauticAPI.Contact updatedContact = dialog.getUpdatedContact(contact.id);
+                    mauticAPI.updateContact(updatedContact);
+                    
+                    // Cache und Liste aktualisieren
+                    String displayName = updatedContact.toString();
+                    contactCache.put(displayName, updatedContact);
+                    
+                    // Liste aktualisieren
+                    int index = contactList.getSelectedIndex();
+                    contactModel.removeElementAt(index);
+                    contactModel.insertElementAt(displayName, index);
+                    contactList.setSelectedIndex(index);
+                    
+                } catch (IOException ex) {
+                    JOptionPane.showMessageDialog(this,
+                        "Fehler beim Bearbeiten des Kontakts: " + ex.getMessage(),
+                        "Fehler",
+                        JOptionPane.ERROR_MESSAGE);
+                    ex.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private void createContact() {
+        NewContactDialog dialog = new NewContactDialog(this, mauticAPI);
+        if (dialog.showDialog()) {
+            try {
+                MauticAPI.Contact newContact = mauticAPI.createContact(dialog.getNewContact());
+                
+                // In Cache und Liste einfügen
+                String displayName = newContact.toString();
+                contactCache.put(displayName, newContact);
+                contactModel.addElement(displayName);
+                contactList.setSelectedValue(displayName, true);
+                
+            } catch (IOException ex) {
+                JOptionPane.showMessageDialog(this,
+                    "Fehler beim Erstellen des Kontakts: " + ex.getMessage(),
+                    "Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+                ex.printStackTrace();
+            }
+        }
+    }
+
+    private void loadContactsInitial() throws IOException {
+        List<MauticAPI.Contact> contacts = mauticAPI.getContacts();
+        contactModel.clear();
+        contactCache.clear();
+        
+        for (MauticAPI.Contact contact : contacts) {
+            String displayName = contact.toString();
+            contactModel.addElement(displayName);
+            contactCache.put(displayName, contact);  // Im Cache speichern
         }
     }
 
