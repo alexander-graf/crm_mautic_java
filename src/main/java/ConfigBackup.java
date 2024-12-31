@@ -121,8 +121,6 @@ public class ConfigBackup {
         restoreFile(tempDir, "config/letzte_rechnungsnummer_crm_java.json", 
             Paths.get(HOME_DIR, ".config/letzte_rechnungsnummer_crm_java.json"));
         restoreFile(tempDir, "config/config.json", Paths.get(CONFIG_DIR, "config.json"));
-        restoreFile(tempDir, "templates/rechnungs_vorlage_graf.tex", 
-            Paths.get(HOME_DIR, "Vorlagen/rechnungs_vorlage_graf.tex"));
 
         // Stelle Logs wieder her
         Path logsSource = tempDir.resolve("logs");
