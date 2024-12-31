@@ -1,5 +1,6 @@
 import javax.swing.*;
 import java.awt.*;
+import java.net.URL;
 import javax.swing.border.TitledBorder;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
@@ -43,12 +44,45 @@ public class CRMGUI extends JFrame {
     private JPanel kmPanel;      // Panel für Kilometer-Eingabe
     private Map<String, MauticAPI.Contact> contactCache;  // Cache für Kontakte
     private static final Logger logger = LogManager.getLogger(CRMGUI.class);
+    private JButton sendButton;
     
     public CRMGUI() {
         setTitle("CRM System");
         setSize(1000, 600);
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         setLocationRelativeTo(null);
+
+        // Icon setzen
+        try {
+            List<Image> icons = new ArrayList<>();
+            String[] iconSizes = {"16", "32", "48", "64"};
+            
+            for (String size : iconSizes) {
+                URL iconUrl = getClass().getResource("/icons/icon-" + size + ".png");
+                if (iconUrl != null) {
+                    icons.add(new ImageIcon(iconUrl).getImage());
+                    logger.info("Icon geladen: icon-" + size + ".png");
+                } else {
+                    logger.warn("Icon nicht gefunden: icon-" + size + ".png");
+                }
+            }
+            
+            if (!icons.isEmpty()) {
+                setIconImages(icons);
+            } else {
+                // Fallback: Versuche das Original-Icon
+                URL iconUrl = getClass().getResource("/icons/digikam.png");
+                if (iconUrl != null) {
+                    setIconImage(new ImageIcon(iconUrl).getImage());
+                    logger.info("Fallback-Icon geladen");
+                } else {
+                    logger.warn("Kein Icon gefunden");
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Fehler beim Laden der App-Icons", e);
+            e.printStackTrace();  // Für detailliertere Fehleranalyse
+        }
 
         addWindowListener(new WindowAdapter() {
             @Override
@@ -471,14 +505,20 @@ public class CRMGUI extends JFrame {
 
         previewArea = new JTextArea();
         previewArea.setEditable(false);
+        previewArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
         JScrollPane scrollPane = new JScrollPane(previewArea);
         panel.add(scrollPane, BorderLayout.CENTER);
 
+        // Button Panel
         JPanel buttonPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
         previewButton = new JButton("PDF Vorschau");
         createButton = new JButton("Rechnung erstellen");
+        sendButton = new JButton("Erstellen & Senden");  // Hier initialisieren wir den Button
+        
         buttonPanel.add(previewButton);
         buttonPanel.add(createButton);
+        buttonPanel.add(sendButton);
+        
         panel.add(buttonPanel, BorderLayout.SOUTH);
 
         return panel;
@@ -532,6 +572,43 @@ public class CRMGUI extends JFrame {
                         // Aktualisiere die Vorschau oder andere UI-Elemente
                         updatePreview(selectedContact);
                     }
+                }
+            }
+        });
+
+        sendButton.addActionListener(e -> {
+            if (validateInputs()) {
+                try {
+                    // Rechnung erstellen
+                    String invoiceNumber = generateInvoiceNumber();
+                    File pdfFile = generateInvoice(invoiceNumber, false);
+                    
+                    // E-Mail-Dialog anzeigen
+                    MauticAPI.Contact selectedContact = contactCache.get(contactList.getSelectedValue());
+                    EmailPreviewDialog dialog = new EmailPreviewDialog(
+                        this, 
+                        selectedContact, 
+                        invoiceNumber, 
+                        pdfFile,
+                        config
+                    );
+                    
+                    if (dialog.showDialog()) {
+                        // Rechnungsnummer bestätigen nach erfolgreichem Versand
+                        LocalDate invoiceDate = invoiceDateChooser.getDate().toInstant()
+                            .atZone(java.time.ZoneId.systemDefault())
+                            .toLocalDate();
+                        config.confirmInvoiceNumber(invoiceDate.getYear());
+                        
+                        // Erfolgsmeldung
+                        JOptionPane.showMessageDialog(this,
+                            "Rechnung wurde erstellt und per E-Mail versendet.",
+                            "Erfolg",
+                            JOptionPane.INFORMATION_MESSAGE);
+                        resetForm();
+                    }
+                } catch (Exception ex) {
+                    handleError("Fehler beim Erstellen/Senden der Rechnung", ex);
                 }
             }
         });
@@ -876,6 +953,109 @@ public class CRMGUI extends JFrame {
             contactModel.addElement(displayName);
             contactCache.put(displayName, contact);  // Im Cache speichern
         }
+    }
+
+    private boolean validateInputs() {
+        if (contactList.getSelectedValue() == null) {
+            JOptionPane.showMessageDialog(this,
+                "Bitte wählen Sie einen Kontakt aus.",
+                "Fehler",
+                JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        
+        if (serviceModel.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                "Bitte fügen Sie mindestens eine Dienstleistung hinzu.",
+                "Fehler",
+                JOptionPane.ERROR_MESSAGE);
+            return false;
+        }
+        
+        return isValidDates();  // Diese Methode existiert bereits
+    }
+
+    private String generateInvoiceNumber() {
+        // Hole den ausgewählten Kontakt aus dem Cache
+        String selectedContactName = contactList.getSelectedValue();
+        MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
+        
+        config.setPreviewMode(false);
+        PDFGenerator generator = new PDFGenerator(config);
+        return generator.generateInvoiceNumber(selectedContact, invoiceDateChooser.getDate());
+    }
+
+    private File generateInvoice(String invoiceNumber, boolean isPreview) throws IOException {
+        // Hole den ausgewählten Kontakt aus dem Cache
+        String selectedContactName = contactList.getSelectedValue();
+        MauticAPI.Contact selectedContact = contactCache.get(selectedContactName);
+        
+        if (isPreview) {
+            Path tempDir = Files.createTempDirectory("crm_preview");
+            String tempPdfPath = tempDir.resolve("preview.pdf").toString();
+            config.setPreviewMode(true);
+            PDFGenerator generator = new PDFGenerator(config);
+            generator.generateInvoice(
+                selectedContact,
+                parseServiceItems(),
+                tempPdfPath,
+                invoiceDateChooser.getDate(),
+                serviceDateChooser.getDate()
+            );
+            config.setPreviewMode(false);
+            return new File(tempPdfPath);
+        } else {
+            // Erstelle Jahresordner
+            int year = LocalDate.now().getYear();
+            Path invoicePath = Paths.get(config.getInvoicePath(), String.valueOf(year));
+            Files.createDirectories(invoicePath);
+
+            // Generiere Dateinamen
+            String fileName = String.format("Graf-Computer-Rechnung-%s-%s-%s-%s.pdf",
+                invoiceNumber,
+                selectedContact.lastname,
+                selectedContact.firstname,
+                LocalDate.now().format(DateTimeFormatter.ofPattern("dd-MM-yyyy")));
+            
+            Path pdfPath = invoicePath.resolve(fileName);
+            
+            PDFGenerator generator = new PDFGenerator(config);
+            generator.generateInvoice(
+                selectedContact,
+                parseServiceItems(),
+                pdfPath.toString(),
+                invoiceDateChooser.getDate(),
+                serviceDateChooser.getDate()
+            );
+            
+            return pdfPath.toFile();
+        }
+    }
+
+    private void resetForm() {
+        if (serviceModel != null) {
+            serviceModel.clear();
+        }
+        if (hoursSpinner != null) {
+            hoursSpinner.setValue(0.0);  // Double für Stunden
+        }
+        if (kmSpinner != null) {
+            kmSpinner.setValue(0);  // Integer für Kilometer
+        }
+        if (rateField != null) {
+            rateField.setText("");
+        }
+        if (previewArea != null) {
+            previewArea.setText("");
+        }
+    }
+
+    private void handleError(String message, Exception ex) {
+        logger.error(message, ex);
+        JOptionPane.showMessageDialog(this,
+            message + ": " + ex.getMessage(),
+            "Fehler",
+            JOptionPane.ERROR_MESSAGE);
     }
 
     public static void main(String[] args) {

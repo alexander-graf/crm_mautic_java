@@ -13,7 +13,7 @@ public class EmailService {
         this.config = config;
     }
     
-    public void sendInvoice(MauticAPI.Contact contact, File pdfFile, String invoiceNumber) 
+    public void sendInvoice(MauticAPI.Contact contact, File pdfFile, String invoiceNumber, String customText) 
             throws MessagingException, IOException {
         Properties props = new Properties();
         props.put("mail.smtp.auth", "true");
@@ -51,9 +51,9 @@ public class EmailService {
         // Multipart Message erstellen
         Multipart multipart = new MimeMultipart();
 
-        // Text-Teil
+        // Text-Teil mit benutzerdefiniertem Text
         MimeBodyPart textPart = new MimeBodyPart();
-        textPart.setText(emailText);
+        textPart.setText(customText);
         multipart.addBodyPart(textPart);
 
         // PDF-Anhang
