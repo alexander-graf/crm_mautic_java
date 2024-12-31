@@ -205,6 +205,7 @@ public class CRMGUI extends JFrame {
         setJMenuBar(menuBar);
 
         addContactItem.addActionListener(e -> createContact());
+        editContactItem.addActionListener(e -> editContact());  // Verbinde mit der Bearbeitungsfunktion
     }
 
     private JPanel createContactPanel() {
@@ -891,31 +892,14 @@ public class CRMGUI extends JFrame {
             return;
         }
 
-        // Kontakt direkt aus dem Cache holen
         MauticAPI.Contact contact = contactCache.get(selectedContact);
         if (contact != null) {
-            EditContactDialog dialog = new EditContactDialog(this, contact, mauticAPI);
+            EditContactDialog dialog = new EditContactDialog(this, mauticAPI, contact);
             if (dialog.showDialog()) {
                 try {
-                    MauticAPI.Contact updatedContact = dialog.getUpdatedContact(contact.id);
-                    mauticAPI.updateContact(updatedContact);
-                    
-                    // Cache und Liste aktualisieren
-                    String displayName = updatedContact.toString();
-                    contactCache.put(displayName, updatedContact);
-                    
-                    // Liste aktualisieren
-                    int index = contactList.getSelectedIndex();
-                    contactModel.removeElementAt(index);
-                    contactModel.insertElementAt(displayName, index);
-                    contactList.setSelectedIndex(index);
-                    
+                    loadContactsInitial();
                 } catch (IOException ex) {
-                    JOptionPane.showMessageDialog(this,
-                        "Fehler beim Bearbeiten des Kontakts: " + ex.getMessage(),
-                        "Fehler",
-                        JOptionPane.ERROR_MESSAGE);
-                    ex.printStackTrace();
+                    logger.error("Fehler beim Neuladen der Kontakte", ex);
                 }
             }
         }
@@ -925,20 +909,9 @@ public class CRMGUI extends JFrame {
         NewContactDialog dialog = new NewContactDialog(this, mauticAPI);
         if (dialog.showDialog()) {
             try {
-                MauticAPI.Contact newContact = mauticAPI.createContact(dialog.getNewContact());
-                
-                // In Cache und Liste einfügen
-                String displayName = newContact.toString();
-                contactCache.put(displayName, newContact);
-                contactModel.addElement(displayName);
-                contactList.setSelectedValue(displayName, true);
-                
+                loadContactsInitial();
             } catch (IOException ex) {
-                JOptionPane.showMessageDialog(this,
-                    "Fehler beim Erstellen des Kontakts: " + ex.getMessage(),
-                    "Fehler",
-                    JOptionPane.ERROR_MESSAGE);
-                ex.printStackTrace();
+                logger.error("Fehler beim Neuladen der Kontakte", ex);
             }
         }
     }
