@@ -19,6 +19,7 @@ public class Config {
     private String mauticApiUrl = "https://mautic.alexander-graf.de";
     private String templatePath = System.getProperty("user.home") + "/Vorlagen/rechnungs_vorlage_graf.tex";
     private String invoicePath = System.getProperty("user.home") + "/Nextcloud/IT-Service-Rechnungen";
+    private String backupPath = System.getProperty("user.home") + "/.config/crm-gui/backups";
     private String smtpHost = "w0196dc7.kasserver.com";
     private int smtpPort = 587;
     private String smtpUsername = "";
@@ -164,5 +165,14 @@ public class Config {
 
     public void setEmailTemplate(String template) {
         this.emailTemplate = template;
+    }
+
+    // Getter und Setter für backupPath
+    public String getBackupPath() {
+        return backupPath;
+    }
+
+    public void setBackupPath(String backupPath) {
+        this.backupPath = backupPath;
     }
 } 

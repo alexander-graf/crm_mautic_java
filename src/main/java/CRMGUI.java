@@ -176,6 +176,67 @@ public class CRMGUI extends JFrame {
         
         settingsMenu.add(numberItem);
 
+        // Backup und Restore
+        JMenuItem backupItem = new JMenuItem("Backup erstellen");
+        backupItem.addActionListener(e -> {
+            try {
+                ConfigBackup.createBackup(config);
+                JOptionPane.showMessageDialog(this,
+                    "Backup wurde erfolgreich erstellt.",
+                    "Backup erstellt",
+                    JOptionPane.INFORMATION_MESSAGE);
+            } catch (IOException ex) {
+                logger.error("Fehler beim Erstellen des Backups", ex);
+                JOptionPane.showMessageDialog(this,
+                    "Fehler beim Erstellen des Backups: " + ex.getMessage(),
+                    "Fehler",
+                    JOptionPane.ERROR_MESSAGE);
+            }
+        });
+
+        JMenuItem restoreItem = new JMenuItem("Backup wiederherstellen");
+        restoreItem.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Backup-Datei auswählen");
+            fileChooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
+                public boolean accept(File f) {
+                    return f.isDirectory() || f.getName().toLowerCase().endsWith(".zip");
+                }
+                public String getDescription() {
+                    return "Backup-Dateien (*.zip)";
+                }
+            });
+
+            // Setze Startverzeichnis auf das Backup-Verzeichnis
+            File backupDir = new File(System.getProperty("user.home") + "/.config/crm-gui/backups");
+            if (backupDir.exists()) {
+                fileChooser.setCurrentDirectory(backupDir);
+            }
+
+            if (fileChooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
+                try {
+                    ConfigBackup.restoreBackup(fileChooser.getSelectedFile());
+                    JOptionPane.showMessageDialog(this,
+                        "Backup wurde erfolgreich wiederhergestellt.\n" +
+                        "Bitte starten Sie das Programm neu, damit die Änderungen wirksam werden.",
+                        "Backup wiederhergestellt",
+                        JOptionPane.INFORMATION_MESSAGE);
+                    System.exit(0);  // Programm beenden
+                } catch (IOException ex) {
+                    logger.error("Fehler beim Wiederherstellen des Backups", ex);
+                    JOptionPane.showMessageDialog(this,
+                        "Fehler beim Wiederherstellen des Backups: " + ex.getMessage(),
+                        "Fehler",
+                        JOptionPane.ERROR_MESSAGE);
+                }
+            }
+        });
+
+        settingsMenu.addSeparator();
+        settingsMenu.add(backupItem);
+        settingsMenu.add(restoreItem);
+        settingsMenu.addSeparator();
+
         JMenuItem settingsItem = new JMenuItem("Einstellungen");
         settingsItem.addActionListener(e -> {
             SettingsDialog dialog = new SettingsDialog(this, config);

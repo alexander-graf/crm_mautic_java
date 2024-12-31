@@ -1,168 +1,170 @@
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import java.io.*;
 import java.nio.file.*;
 import java.util.zip.*;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import java.util.stream.Stream;
+import java.util.Comparator;
+import java.util.ArrayList;
+import java.util.List;
 
 public class ConfigBackup {
-    private static final Gson gson = new GsonBuilder().setPrettyPrinting().create();
-    
-    public static class BackupConfig {
-        public String mauticApiUrl;
-        public String templatePath;
-        public String invoicePath;
-        public String smtpHost;
-        public int smtpPort;
-        public String smtpUsername;
-        public String senderEmail;
-        public String emailTemplate;
-        // Sensitive Daten werden nicht gesichert:
-        // - access_token.json
-        // - smtpPassword
-    }
-    
-    public static void createBackup(Config config, String backupPath) throws IOException {
-        // Backup-Konfiguration erstellen
-        BackupConfig backupConfig = new BackupConfig();
-        backupConfig.mauticApiUrl = config.getMauticApiUrl();
-        backupConfig.templatePath = config.getTemplatePath();
-        backupConfig.invoicePath = config.getInvoicePath();
-        backupConfig.smtpHost = config.getSmtpHost();
-        backupConfig.smtpPort = config.getSmtpPort();
-        backupConfig.smtpUsername = config.getSmtpUsername();
-        backupConfig.senderEmail = config.getSenderEmail();
-        backupConfig.emailTemplate = config.getEmailTemplate();
+    private static final Logger logger = LogManager.getLogger(ConfigBackup.class);
+    private static final String CONFIG_DIR = System.getProperty("user.home") + "/.config/crm-gui";
+    private static final String HOME_DIR = System.getProperty("user.home");
 
-        // Temporäres Verzeichnis für Backup erstellen
-        Path tempDir = Files.createTempDirectory("crm_backup");
-        
-        try {
-            // Config-JSON speichern
-            String configJson = gson.toJson(backupConfig);
-            Files.writeString(tempDir.resolve("config.json"), configJson);
-            
-            // Rechnungsnummer-Datei kopieren
-            Path rechnungsnummerSrc = Paths.get(System.getProperty("user.home"), 
-                ".config", "letzte_rechnungsnummer_crm_java.json");
-            if (Files.exists(rechnungsnummerSrc)) {
-                Files.copy(rechnungsnummerSrc, 
-                    tempDir.resolve("letzte_rechnungsnummer_crm_java.json"));
-            }
-            
-            // Access Token kopieren
-            Path accessTokenSrc = Paths.get(System.getProperty("user.home"), 
-                ".config", "access_token.json");
-            if (Files.exists(accessTokenSrc)) {
-                Files.copy(accessTokenSrc, 
-                    tempDir.resolve("access_token.json"));
-            }
-            
-            // LaTeX-Vorlage kopieren
-            Path templateSrc = Paths.get(config.getTemplatePath());
-            if (Files.exists(templateSrc)) {
-                Files.copy(templateSrc, 
-                    tempDir.resolve("rechnungs_vorlage_graf.tex"));
-            }
+    // Struktur für Backup-Dateien mit Quelle und Ziel im ZIP
+    private static class BackupFile {
+        final Path sourcePath;
+        final String zipPath;
 
-            // ZIP erstellen
-            String timestamp = LocalDateTime.now()
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-            String zipName = "crm_backup_" + timestamp + ".zip";
-            Path zipPath = Paths.get(backupPath, zipName);
-            
-            try (ZipOutputStream zos = new ZipOutputStream(
-                    new FileOutputStream(zipPath.toFile()))) {
-                Files.walk(tempDir)
-                    .filter(path -> !Files.isDirectory(path))
-                    .forEach(path -> {
-                        try {
-                            ZipEntry zipEntry = new ZipEntry(
-                                tempDir.relativize(path).toString());
-                            zos.putNextEntry(zipEntry);
-                            Files.copy(path, zos);
-                            zos.closeEntry();
-                        } catch (IOException e) {
-                            throw new UncheckedIOException(e);
-                        }
-                    });
-            }
-        } finally {
-            // Temporäres Verzeichnis aufräumen
-            Files.walk(tempDir)
-                .sorted(java.util.Comparator.reverseOrder())
-                .map(Path::toFile)
-                .forEach(File::delete);
+        BackupFile(Path sourcePath, String zipPath) {
+            this.sourcePath = sourcePath;
+            this.zipPath = zipPath;
         }
     }
-    
-    public static void restoreBackup(String zipPath, Config config) throws IOException {
-        Path tempDir = Files.createTempDirectory("crm_restore");
-        
-        try {
-            // ZIP entpacken
-            try (ZipInputStream zis = new ZipInputStream(
-                    new FileInputStream(zipPath))) {
-                ZipEntry zipEntry;
-                while ((zipEntry = zis.getNextEntry()) != null) {
-                    Path targetPath = tempDir.resolve(zipEntry.getName());
-                    Files.createDirectories(targetPath.getParent());
-                    Files.copy(zis, targetPath);
+
+    public static void createBackup(Config config) throws IOException {
+        // Erstelle Liste aller zu sichernden Dateien
+        List<BackupFile> backupFiles = new ArrayList<>();
+
+        // CRM-GUI Konfigurationsdateien
+        backupFiles.add(new BackupFile(
+            Paths.get(HOME_DIR, ".config/access_token.json"),
+            "config/access_token.json"
+        ));
+        backupFiles.add(new BackupFile(
+            Paths.get(HOME_DIR, ".config/letzte_rechnungsnummer_crm_java.json"),
+            "config/letzte_rechnungsnummer_crm_java.json"
+        ));
+        backupFiles.add(new BackupFile(
+            Paths.get(CONFIG_DIR, "config.json"),
+            "config/config.json"
+        ));
+
+        // LaTeX Vorlage
+        backupFiles.add(new BackupFile(
+            Paths.get(config.getTemplatePath()),
+            "templates/rechnungs_vorlage_graf.tex"
+        ));
+
+        // Log-Verzeichnis
+        Path logsDir = Paths.get(CONFIG_DIR, "logs");
+        if (Files.exists(logsDir)) {
+            try (Stream<Path> paths = Files.walk(logsDir)) {
+                paths.filter(path -> !Files.isDirectory(path))
+                     .forEach(path -> backupFiles.add(new BackupFile(
+                         path,
+                         "logs/" + logsDir.relativize(path).toString()
+                     )));
+            }
+        }
+
+        // Erstelle Backup-Verzeichnis
+        Path backupDir = Paths.get(config.getBackupPath());
+        Files.createDirectories(backupDir);
+
+        // Generiere Backup-Dateiname mit Zeitstempel
+        String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss"));
+        String zipFileName = "config_backup_" + timestamp + ".zip";
+        Path zipPath = backupDir.resolve(zipFileName);
+
+        // Erstelle ZIP mit allen Dateien
+        try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(zipPath.toFile()))) {
+            for (BackupFile file : backupFiles) {
+                if (Files.exists(file.sourcePath)) {
+                    addToZip(file.sourcePath, file.zipPath, zos);
+                } else {
+                    logger.warn("Datei existiert nicht und wird übersprungen: " + file.sourcePath);
                 }
             }
-            
-            // Config wiederherstellen
-            String configJson = Files.readString(tempDir.resolve("config.json"));
-            BackupConfig backupConfig = gson.fromJson(configJson, BackupConfig.class);
-            
-            config.setMauticApiUrl(backupConfig.mauticApiUrl);
-            config.setTemplatePath(backupConfig.templatePath);
-            config.setInvoicePath(backupConfig.invoicePath);
-            config.setSmtpHost(backupConfig.smtpHost);
-            config.setSmtpPort(backupConfig.smtpPort);
-            config.setSmtpUsername(backupConfig.smtpUsername);
-            config.setSenderEmail(backupConfig.senderEmail);
-            config.setEmailTemplate(backupConfig.emailTemplate);
-            
-            // Dateien wiederherstellen
-            Path configDir = Paths.get(System.getProperty("user.home"), ".config");
-            Path crmConfigDir = configDir.resolve("crm-gui");
-            Files.createDirectories(crmConfigDir);
-            
-            // Rechnungsnummer wiederherstellen
-            Path rechnungsnummerSrc = tempDir.resolve(
-                "letzte_rechnungsnummer_crm_java.json");
-            if (Files.exists(rechnungsnummerSrc)) {
-                Files.copy(rechnungsnummerSrc, 
-                    configDir.resolve("letzte_rechnungsnummer_crm_java.json"), 
-                    StandardCopyOption.REPLACE_EXISTING);
+            logger.info("Backup erstellt: " + zipPath);
+        }
+    }
+
+    private static void addToZip(Path file, String zipPath, ZipOutputStream zos) {
+        try {
+            ZipEntry entry = new ZipEntry(zipPath);
+            zos.putNextEntry(entry);
+            Files.copy(file, zos);
+            zos.closeEntry();
+            logger.debug("Datei zum Backup hinzugefügt: " + zipPath);
+        } catch (IOException e) {
+            logger.error("Fehler beim Hinzufügen von " + file + " zum Backup", e);
+        }
+    }
+
+    public static void restoreBackup(File zipFile) throws IOException {
+        // Erstelle temporäres Verzeichnis für die Extraktion
+        Path tempDir = Files.createTempDirectory("config_restore_");
+        
+        // Extrahiere ZIP in temporäres Verzeichnis
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                Path targetPath = tempDir.resolve(entry.getName());
+                
+                // Erstelle Verzeichnisse, falls nötig
+                Files.createDirectories(targetPath.getParent());
+                
+                // Extrahiere Datei
+                Files.copy(zis, targetPath, StandardCopyOption.REPLACE_EXISTING);
+                zis.closeEntry();
             }
-            
-            // Access Token wiederherstellen
-            Path accessTokenSrc = tempDir.resolve("access_token.json");
-            if (Files.exists(accessTokenSrc)) {
-                Files.copy(accessTokenSrc, 
-                    configDir.resolve("access_token.json"), 
-                    StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        // Stelle Dateien wieder her
+        restoreFile(tempDir, "config/access_token.json", 
+            Paths.get(HOME_DIR, ".config/access_token.json"));
+        restoreFile(tempDir, "config/letzte_rechnungsnummer_crm_java.json", 
+            Paths.get(HOME_DIR, ".config/letzte_rechnungsnummer_crm_java.json"));
+        restoreFile(tempDir, "config/config.json", Paths.get(CONFIG_DIR, "config.json"));
+        restoreFile(tempDir, "templates/rechnungs_vorlage_graf.tex", 
+            Paths.get(HOME_DIR, "Vorlagen/rechnungs_vorlage_graf.tex"));
+
+        // Stelle Logs wieder her
+        Path logsSource = tempDir.resolve("logs");
+        if (Files.exists(logsSource)) {
+            Path logsTarget = Paths.get(CONFIG_DIR, "logs");
+            try (Stream<Path> paths = Files.walk(logsSource)) {
+                paths.filter(path -> !Files.isDirectory(path))
+                     .forEach(source -> {
+                         try {
+                             Path target = logsTarget.resolve(logsSource.relativize(source));
+                             Files.createDirectories(target.getParent());
+                             Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+                         } catch (IOException e) {
+                             logger.error("Fehler beim Wiederherstellen von " + source, e);
+                         }
+                     });
             }
-            
-            // LaTeX-Vorlage wiederherstellen
-            Path templateSrc = tempDir.resolve("rechnungs_vorlage_graf.tex");
-            if (Files.exists(templateSrc)) {
-                Path templateTarget = Paths.get(backupConfig.templatePath);
-                Files.createDirectories(templateTarget.getParent());
-                Files.copy(templateSrc, templateTarget, 
-                    StandardCopyOption.REPLACE_EXISTING);
-            }
-            
-            config.save();
-        } finally {
-            // Temporäres Verzeichnis aufräumen
-            Files.walk(tempDir)
-                .sorted(java.util.Comparator.reverseOrder())
-                .map(Path::toFile)
-                .forEach(File::delete);
+        }
+
+        // Lösche temporäres Verzeichnis
+        try (Stream<Path> walk = Files.walk(tempDir)) {
+            walk.sorted(Comparator.reverseOrder())
+                .forEach(path -> {
+                    try {
+                        Files.delete(path);
+                    } catch (IOException e) {
+                        logger.error("Fehler beim Löschen des temporären Verzeichnisses", e);
+                    }
+                });
+        }
+        
+        logger.info("Backup wiederhergestellt von: " + zipFile);
+    }
+
+    private static void restoreFile(Path tempDir, String sourcePath, Path targetPath) throws IOException {
+        Path source = tempDir.resolve(sourcePath);
+        if (Files.exists(source)) {
+            Files.createDirectories(targetPath.getParent());
+            Files.copy(source, targetPath, StandardCopyOption.REPLACE_EXISTING);
+            logger.debug("Datei wiederhergestellt: " + targetPath);
+        } else {
+            logger.warn("Datei nicht im Backup gefunden: " + sourcePath);
         }
     }
 } 

@@ -23,6 +23,7 @@ public class SettingsDialog extends JDialog {
     private JTextField apiUrlField;
     private JTextField templatePathField;
     private JTextField invoicePathField;
+    private JTextField backupPathField;
     private JTextField smtpHostField;
     private JSpinner smtpPortSpinner;
     private JTextField smtpUsernameField;
@@ -32,9 +33,11 @@ public class SettingsDialog extends JDialog {
     private static final Logger logger = LogManager.getLogger(SettingsDialog.class);
     private JButton testConnectionButton;
     private JButton testEmailButton;
+    private final Config config;
 
     public SettingsDialog(JFrame parent, Config config) {
         super(parent, "Einstellungen", true);
+        this.config = config;
         
         setLayout(new BorderLayout());
         
@@ -79,8 +82,20 @@ public class SettingsDialog extends JDialog {
         invoicePanel.add(invoiceBrowse, BorderLayout.EAST);
         mainPanel.add(invoicePanel, gbc);
         
-        // E-Mail Einstellungen
+        // Backup-Pfad
         gbc.gridx = 0; gbc.gridy = 3;
+        mainPanel.add(new JLabel("Backup-Verzeichnis:"), gbc);
+        gbc.gridx = 1;
+        JPanel backupPanel = new JPanel(new BorderLayout());
+        backupPathField = new JTextField(config.getBackupPath(), 25);
+        JButton backupBrowse = new JButton("...");
+        backupBrowse.addActionListener(e -> browseDirectory(backupPathField, "Backup-Verzeichnis auswählen"));
+        backupPanel.add(backupPathField, BorderLayout.CENTER);
+        backupPanel.add(backupBrowse, BorderLayout.EAST);
+        mainPanel.add(backupPanel, gbc);
+        
+        // E-Mail Einstellungen
+        gbc.gridx = 0; gbc.gridy = 4;
         mainPanel.add(new JLabel("E-Mail Einstellungen"), gbc);
         gbc.gridx = 1;
         mainPanel.add(createEmailSettingsPanel(), gbc);
@@ -98,6 +113,7 @@ public class SettingsDialog extends JDialog {
                 config.setMauticApiUrl(getApiUrl());
                 config.setTemplatePath(getTemplatePath());
                 config.setInvoicePath(getInvoicePath());
+                config.setBackupPath(getBackupPath());
                 
                 // E-Mail-Einstellungen speichern
                 config.setSmtpHost(smtpHostField.getText());
@@ -160,6 +176,10 @@ public class SettingsDialog extends JDialog {
     
     public String getInvoicePath() {
         return invoicePathField.getText();
+    }
+    
+    public String getBackupPath() {
+        return backupPathField.getText();
     }
     
     private boolean validateSettings() {
